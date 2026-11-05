@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>АРТ Групп · Сканер QR</title>
+<!--
+  Выносной сканер QR для склада АРТ Групп.
+  Зачем отдельная страница: основное приложение отдаётся Apps Script во вложенном sandbox-iframe
+  (googleusercontent.com), где Permissions-Policy запрещает камеру (allow="camera" стоит не на всех
+  уровнях вложенности, а внутренний тег пишет Google — изнутри не починить). Эта страница живёт на
+  своём хосте (GitHub Pages), вне матрёшки Google, поэтому камера доступна.
+  Как работает: приложение открывает эту страницу в новой вкладке (window.open). Считав QR-этикетку
+  (в ней полная ссылка …/exec?u=/?art=/?page=), страница шлёт текст обратно в приложение через
+  postMessage и закрывается — iOS возвращает фокус на вкладку приложения, оно прыгает на карточку.
+  Открыли напрямую (без opener) — показываем ссылку кнопкой, без авто-редиректа.
+  jsqr вшит локально (docs/jsqr.js), внешних зависимостей нет.
+-->
+<style>
+  :root {
+    --bg: #F5F5F3; --card: #fff; --ink: #1A1A1A; --muted: #6B6B6B;
+    --gold: #B8901C; --line: #E8E8E4;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: flex; flex-direction: column; min-height: 100%;
+  }
+  header { padding: 18px 18px 10px; }
+  .eyebrow { font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--gold); font-weight: 700; }
+  .h1 { font-size: 22px; font-weight: 700; margin-top: 2px; }
+  main { flex: 1; display: flex; flex-direction: column; padding: 8px 18px 24px; }
+  .view {
+    position: relative; width: 100%; max-width: 520px; margin: 0 auto;
+    aspect-ratio: 1 / 1; background: #000; border-radius: 18px; overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+  }
+  video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .frame {
+    position: absolute; width: 62%; aspect-ratio: 1; border: 3px solid rgba(255,255,255,.9);
+    border-radius: 18px; box-shadow: 0 0 0 100vmax rgba(0,0,0,.35); animation: pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%,100% { opacity: .9; } 50% { opacity: .5; } }
+  .hint {
+    position: absolute; bottom: 14px; left: 0; right: 0; text-align: center; color: #fff;
+    font-size: 14px; font-weight: 600; text-shadow: 0 1px 4px rgba(0,0,0,.6);
+  }
+  .msg {
+    position: relative; z-index: 2; display: flex; flex-direction: column; gap: 12px; align-items: center;
+    color: #fff; background: rgba(0,0,0,.55); padding: 20px; margin: 0 18px; border-radius: 12px;
+    font-size: 14px; line-height: 1.45; text-align: center;
+  }
+  .btn {
+    appearance: none; border: 0; border-radius: 12px; padding: 13px 18px; font: inherit; font-weight: 700;
+    background: var(--ink); color: #fff; cursor: pointer; text-decoration: none; display: inline-block;
+  }
+  .btn.gold { background: var(--gold); }
+  .foot { max-width: 520px; margin: 14px auto 0; color: var(--muted); font-size: 13px; text-align: center; line-height: 1.5; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<header>
+  <div class="eyebrow">АРТ Групп</div>
+  <div class="h1">Сканер QR</div>
+</header>
+<main>
+  <div class="view">
+    <video id="video" playsinline muted autoplay></video>
+    <div id="frame" class="frame hidden"></div>
+    <div id="hint" class="hint">Запускаю камеру…</div>
+    <div id="msg" class="msg hidden"></div>
+  </div>
+  <div class="foot" id="foot">Наведите камеру на QR-этикетку запчасти — карточка откроется в приложении.</div>
+</main>
+
+<script src="jsqr.js"></script>
+<script>
+(function () {
+  var video = document.getElementById('video');
+  var frame = document.getElementById('frame');
+  var hint = document.getElementById('hint');
+  var msg = document.getElementById('msg');
+  var foot = document.getElementById('foot');
+  var canvas = document.createElement('canvas');
+  var stream = null, raf = 0, done = false;
+
+  // Куда вернуть результат: origin вкладки, которая нас открыла (приложение). Не узнали — '*'
+  // (в QR только ссылка-этикетка, не секрет; приложение само проверяет origin отправителя).
+  function openerOrigin() {
+    try { return new URL(document.referrer).origin; } catch (e) { return '*'; }
+  }
+
+  function showMsg(html) {
+    hint.classList.add('hidden');
+    frame.classList.add('hidden');
+    msg.innerHTML = html;
+    msg.classList.remove('hidden');
+  }
+
+  function deliver(text) {
+    if (done) return;
+    done = true;
+    stop();
+    var opener = window.opener;
+    if (opener && !opener.closed) {
+      try { opener.postMessage({ type: 'qr-scan', text: text }, openerOrigin()); } catch (e) {}
+      try { opener.postMessage({ type: 'qr-scan', text: text }, '*'); } catch (e) {}
+      // Пытаемся закрыться — iOS вернёт фокус на приложение. Не вышло — покажем ссылку.
+      window.close();
+      setTimeout(function () { fallbackLink(text, 'Готово — вернитесь во вкладку приложения.'); }, 400);
+    } else {
+      fallbackLink(text, 'QR распознан.');
+    }
+  }
+
+  // Открыли страницу напрямую (без приложения): не делаем авто-редирект, даём ссылку кнопкой.
+  function fallbackLink(text, title) {
+    var isUrl = /^https?:\/\//i.test(text);
+    foot.classList.add('hidden');
+    if (isUrl) {
+      showMsg('<div>' + title + '</div><a class="btn gold" href="' + encodeURI(text) + '">Открыть карточку</a>');
+    } else {
+      var safe = text.replace(/[<&>]/g, function (c) { return c === '<' ? '&lt;' : c === '&' ? '&amp;' : '&gt;'; });
+      showMsg('<div>' + title + '</div><div>Код: <b>' + safe + '</b></div>');
+    }
+  }
+
+  function tick() {
+    if (!stream || done) return;
+    if (video.readyState >= video.HAVE_ENOUGH_DATA && video.videoWidth) {
+      var w = video.videoWidth, h = video.videoHeight;
+      canvas.width = w; canvas.height = h;
+      var ctx = canvas.getContext('2d', { willReadFrequently: true });
+      if (ctx) {
+        ctx.drawImage(video, 0, 0, w, h);
+        var img = ctx.getImageData(0, 0, w, h);
+        var code = window.jsQR ? window.jsQR(img.data, w, h, { inversionAttempts: 'dontInvert' }) : null;
+        if (code && code.data) { deliver(code.data); return; }
+      }
+    }
+    raf = requestAnimationFrame(tick);
+  }
+
+  function stop() {
+    cancelAnimationFrame(raf);
+    if (stream) { stream.getTracks().forEach(function (t) { t.stop(); }); stream = null; }
+  }
+
+  function start() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      showMsg('<div>Этот браузер не поддерживает камеру.</div>'); return;
+    }
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false })
+      .then(function (s) {
+        stream = s; video.srcObject = s;
+        return video.play();
+      })
+      .then(function () {
+        hint.textContent = 'Наведите на QR-этикетку';
+        frame.classList.remove('hidden');
+        raf = requestAnimationFrame(tick);
+      })
+      .catch(function (e) {
+        var name = e && e.name;
+        // Здесь (на своём хосте) ошибки камеры настоящие — можно честно звать в настройки.
+        var text = (name === 'NotAllowedError' || name === 'SecurityError')
+          ? 'Доступ к камере запрещён. Разрешите камеру для этого сайта в настройках браузера и обновите страницу.'
+          : (name === 'NotFoundError')
+          ? 'Камера не найдена на устройстве.'
+          : 'Не удалось включить камеру. Попробуйте обновить страницу.';
+        showMsg('<div>' + text + '</div><button class="btn" onclick="location.reload()">Обновить</button>');
+      });
+  }
+
+  window.addEventListener('pagehide', stop);
+  start();
+})();
+</script>
+</body>
+</html>
