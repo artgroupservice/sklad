@@ -48,15 +48,16 @@
      env(safe-area-inset-*), а приложение внутри cross-origin iframe видит эти переменные
      как 0 (iOS не прокидывает их во вложенный origin). Поэтому отступы под статус-бар и
      домашний индикатор задаёт обёртка — здесь, а не приложение. Сами безопасные зоны
-     заполняет фон body (var(--bg)): статус-бар (black-translucent) ложится на светлый фон. */
-  #app {
-    position: fixed;
-    top: env(safe-area-inset-top, 0px);
-    right: env(safe-area-inset-right, 0px);
-    bottom: env(safe-area-inset-bottom, 0px);
-    left: env(safe-area-inset-left, 0px);
-    border: 0; display: block; background: var(--bg);
+     заполняет фон (var(--bg)): статус-бар (black-translucent) ложится на светлый фон.
+     Отступы вешаем на div-обёртку через padding (box-sizing: border-box), а сам iframe
+     заполняет её на 100%. Через top/right/bottom/left iframe растягивать нельзя: это
+     заменяемый элемент, при auto-размере он берёт intrinsic 300×150 — экран схлопывается. */
+  #appframe {
+    position: fixed; inset: 0; background: var(--bg);
+    padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px)
+             env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
   }
+  #app { width: 100%; height: 100%; border: 0; display: block; background: var(--bg); }
   /* Перекрытие плашки Google снизу (высота — в --gas-bar-h). По умолчанию 0 — не видно.
      Садится на нижнюю кромку iframe (над домашним индикатором), в одной зоне с панелью #tab. */
   #gasCover {
@@ -83,8 +84,10 @@
 </style>
 </head>
 <body>
-  <iframe id="app" title="АРТ Групп · Склад"
-          allow="camera; microphone; fullscreen; clipboard-read; clipboard-write"></iframe>
+  <div id="appframe">
+    <iframe id="app" title="АРТ Групп · Склад"
+            allow="camera; microphone; fullscreen; clipboard-read; clipboard-write"></iframe>
+  </div>
   <div id="gasCover"></div>
   <div id="boot">
     <div class="mark">АРТ</div>
