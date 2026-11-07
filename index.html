@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>АРТ Групп · Склад</title>
+<!--
+  Обёртка приложения «Склад» на своём хосте (GitHub Pages).
+  Зачем: приложение отдаёт Apps Script по ссылке …/exec с плашкой Google «создано пользователем
+  Apps Script». Здесь приложение открывается во <iframe> на вашем домене, поэтому в адресной строке
+  и на «домашнем экране» — ваш адрес, а не script.google.com. Для встраивания сервер отдаёт
+  приложение с setXFrameOptionsMode(ALLOWALL) (см. src/server.gs → doGet в основном репозитории).
+
+  QR и ссылки: этикетки печатают ?art=/?u=/?page=/?arts=. Обёртка прокидывает ВЕСЬ свой query-string
+  в iframe без изменений — doGet сам разбирает нужные параметры и игнорирует лишние, так что старые
+  и будущие параметры продолжают работать (QR не ломаются). Пример:
+    https://elgar-mamedov.github.io/art-group-sklad-scan/?art=А-1050
+  откроет карточку артикула А-1050.
+
+  Сканер (scan.html) живёт рядом и работает как прежде: приложение открывает его новой вкладкой
+  (window.open) и ждёт результат через postMessage — лишний слой iframe этому не мешает.
+
+  PWA-мету (иконка, theme-color, standalone) повторяем из web/index.html, чтобы «Добавить на
+  главный экран» создавал ярлык на этот адрес и запускал приложение как обычно.
+-->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Склад">
+<meta name="theme-color" content="#F5F5F3">
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20180%20180%22%3E%3Crect%20width%3D%22180%22%20height%3D%22180%22%20fill%3D%22%23B8901C%22%2F%3E%3Ctext%20x%3D%2290%22%20y%3D%2298%22%20font-family%3D%22-apple-system%2CSegoe%20UI%2CRoboto%2CArial%2Csans-serif%22%20font-size%3D%2252%22%20font-weight%3D%22800%22%20fill%3D%22%23fff%22%20text-anchor%3D%22middle%22%3E%D0%90%D0%A0%D0%A2%3C%2Ftext%3E%3C%2Fsvg%3E">
+<style>
+  :root {
+    --bg: #F5F5F3; --gold: #B8901C; --muted: #6B6B6B;
+    /* Высота плашки Google, которую перекрываем снизу. 0 = ничего не перекрываем.
+       После деплоя ALLOWALL посмотреть на телефоне, появилась ли внизу полоса Google,
+       и если да — выставить её высоту (напр. 30px). Своя нижняя панель приложения
+       (#tab) при этом не страдает: полоса Google идёт ниже неё. */
+    --gas-bar-h: 0px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; }
+  body {
+    font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  /* Полноэкранный контейнер приложения. */
+  #app {
+    position: fixed; inset: 0; border: 0; width: 100%; height: 100%;
+    display: block; background: var(--bg);
+  }
+  /* Перекрытие плашки Google снизу (высота — в --gas-bar-h). По умолчанию 0 — не видно. */
+  #gasCover {
+    position: fixed; left: 0; right: 0; bottom: 0; height: var(--gas-bar-h);
+    background: var(--bg); z-index: 2; pointer-events: none;
+  }
+  /* Экран загрузки — пока грузится iframe. */
+  #boot {
+    position: fixed; inset: 0; z-index: 3; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 16px; background: var(--bg);
+    transition: opacity .25s ease; color: var(--muted); font-size: 14px;
+  }
+  #boot.hide { opacity: 0; pointer-events: none; }
+  .mark {
+    width: 64px; height: 64px; border-radius: 16px; background: var(--gold); color: #fff;
+    display: flex; align-items: center; justify-content: center; font-size: 26px; font-weight: 800;
+  }
+  .spin {
+    width: 22px; height: 22px; border: 2.5px solid rgba(0,0,0,.12); border-top-color: var(--gold);
+    border-radius: 50%; animation: rot .8s linear infinite;
+  }
+  @keyframes rot { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+  <iframe id="app" title="АРТ Групп · Склад"
+          allow="camera; microphone; fullscreen; clipboard-read; clipboard-write"></iframe>
+  <div id="gasCover"></div>
+  <div id="boot">
+    <div class="mark">АРТ</div>
+    <div class="spin"></div>
+    <div>Загружаю склад…</div>
+  </div>
+
+<script>
+(function () {
+  // Развёртывание приложения в Apps Script. Меняется только при новом развёртывании (deploy.json).
+  var EXEC = 'https://script.google.com/macros/s/AKfycbybpbr1qooSMT1iHqtZNUbp2h9q1UhhylkDtk9xuS9qrv1Moc_ykImSu9zLNBuF0S6w/exec';
+
+  var app = document.getElementById('app');
+  var boot = document.getElementById('boot');
+
+  // Прокидываем весь query-string как есть (?art=/?u=/?page=/?arts=). doGet разберёт нужное,
+  // лишнее проигнорирует — поэтому и старые, и будущие параметры этикеток продолжают работать.
+  app.src = EXEC + (location.search || '');
+
+  // Прячем загрузку, когда приложение отрисовалось. load у cross-origin iframe срабатывает,
+  // но дадим и страховку по таймеру — на случай, если браузер его не отдаст.
+  var hidden = false;
+  function hideBoot() {
+    if (hidden) return;
+    hidden = true;
+    boot.classList.add('hide');
+    setTimeout(function () { boot.remove(); }, 300);
+  }
+  app.addEventListener('load', hideBoot);
+  setTimeout(hideBoot, 6000);
+})();
+</script>
+</body>
+</html>
