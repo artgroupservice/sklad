@@ -25,7 +25,9 @@
 -->
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<!-- default (а не black-translucent): iOS сам ставит контент ПОД статус-баром, не поверх.
+     Так верх не зависит от env(safe-area-inset-top), который в standalone-PWA ненадёжен. -->
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Склад">
 <meta name="theme-color" content="#F5F5F3">
 <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20180%20180%22%3E%3Crect%20width%3D%22180%22%20height%3D%22180%22%20fill%3D%22%23B8901C%22%2F%3E%3Ctext%20x%3D%2290%22%20y%3D%2298%22%20font-family%3D%22-apple-system%2CSegoe%20UI%2CRoboto%2CArial%2Csans-serif%22%20font-size%3D%2252%22%20font-weight%3D%22800%22%20fill%3D%22%23fff%22%20text-anchor%3D%22middle%22%3E%D0%90%D0%A0%D0%A2%3C%2Ftext%3E%3C%2Fsvg%3E">
@@ -43,27 +45,13 @@
   body {
     font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   }
-  /* Контейнер приложения, вписанный в безопасные зоны (вырез/статус-бар сверху,
-     домашний индикатор снизу). В standalone-PWA обёртка — top-level документ и получает
-     env(safe-area-inset-*), а приложение внутри cross-origin iframe видит эти переменные
-     как 0 (iOS не прокидывает их во вложенный origin). Поэтому отступы под статус-бар и
-     домашний индикатор задаёт обёртка — здесь, а не приложение. Сами безопасные зоны
-     заполняет фон (var(--bg)): статус-бар (black-translucent) ложится на светлый фон.
-     Отступы вешаем на div-обёртку через padding (box-sizing: border-box), а сам iframe
-     заполняет её на 100%. Через top/right/bottom/left iframe растягивать нельзя: это
-     заменяемый элемент, при auto-размере он берёт intrinsic 300×150 — экран схлопывается. */
-  #appframe {
-    position: fixed; inset: 0; background: var(--bg);
-    /* Отступы только сверху и по бокам (статус-бар/вырез). Низ (домашний индикатор)
-       НЕ трогаем: его уже учитывает само приложение — панель #tab и её
-       --safe=env(safe-area-inset-bottom) работают внутри iframe. Если добавить сюда
-       ещё и padding-bottom — получается двойной отступ, и в PWA снизу лишний зазор.
-       Сверху так не выходит: шапку приложение под статус-бар не отодвигает, поэтому
-       верхний отступ целиком на обёртке — двойного счёта там нет. */
-    padding-top: env(safe-area-inset-top, 0px);
-    padding-right: env(safe-area-inset-right, 0px);
-    padding-left: env(safe-area-inset-left, 0px);
-  }
+  /* Контейнер приложения на весь экран. Безопасные зоны НЕ задаём здесь:
+     - верх: статус-бар резервирует сам iOS (status-bar-style=default — контент под ним);
+     - низ: домашний индикатор учитывает само приложение (панель #tab и её
+       --safe=env(safe-area-inset-bottom) работают внутри iframe).
+     Раньше верх пытались отвести через env(safe-area-inset-top) в обёртке, но в
+     standalone-PWA это ненадёжно (где-то работает, где-то шапка пряталась под статус-бар). */
+  #appframe { position: fixed; inset: 0; background: var(--bg); }
   #app { width: 100%; height: 100%; border: 0; display: block; background: var(--bg); }
   /* Перекрытие плашки Google снизу (высота — в --gas-bar-h). По умолчанию 0 — не видно.
      Садится на нижнюю кромку iframe (над домашним индикатором), в одной зоне с панелью #tab. */
