@@ -197,16 +197,26 @@
   }
   document.getElementById('back').addEventListener('click', cancel);
 
-  // iOS PWA: сканер открыт в Safari поверх приложения. Когда пользователь возвращается
-  // в приложение, эта страница становится СКРЫТОЙ, но не выгружается — pagehide не
-  // срабатывает и камера продолжает работать (на iPhone горит индикатор записи).
-  // Поэтому гасим камеру как только страница скрыта и включаем снова при возврате к ней.
-  document.addEventListener('visibilitychange', function () {
-    if (document.hidden) stop();
-    else start();
+  // iOS PWA: сканер открыт в Safari ПОВЕРХ приложения (отдельным приложением). Когда пользователь
+  // возвращается в приложение, эта страница уходит в фон, но не выгружается — камера продолжает
+  // работать (на iPhone горит индикатор записи). Разные версии iOS присылают при этом разные
+  // события (visibilitychange / pagehide / blur), поэтому слушаем все и гасим камеру по любому.
+  // Включаем снова при возврате к странице (focus / видима), если сканирование не завершено.
+  function onHide() { stop(); }
+  function onShow() { if (!done && !document.hidden) start(); }
+  document.addEventListener('visibilitychange', function () { document.hidden ? stop() : onShow(); });
+  window.addEventListener('pagehide', onHide);
+  window.addEventListener('blur', onHide);
+  window.addEventListener('focus', onShow);
+  window.addEventListener('pageshow', onShow);
+
+  // Приложение, вернувшись на передний план, просит остановить камеру (на случай, когда
+  // закрыть вкладку/поймать visibilitychange на iOS не удаётся). Больше не включаем.
+  window.addEventListener('message', function (e) {
+    var d = e && e.data;
+    if (d && d.type === 'qr-stop') { done = true; stop(); }
   });
 
-  window.addEventListener('pagehide', stop);
   start();
 })();
 </script>
