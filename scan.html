@@ -88,7 +88,7 @@
   var msg = document.getElementById('msg');
   var foot = document.getElementById('foot');
   var canvas = document.createElement('canvas');
-  var stream = null, raf = 0, done = false;
+  var stream = null, raf = 0, done = false, starting = false;
 
   // Куда вернуть результат: origin вкладки, которая нас открыла (приложение). Не узнали — '*'
   // (в QR только ссылка-этикетка, не секрет; приложение само проверяет origin отправителя).
@@ -153,20 +153,26 @@
   }
 
   function start() {
+    if (stream || starting || done) return;   // уже работает / запускается / отменено
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       showMsg('<div>Этот браузер не поддерживает камеру.</div>'); return;
     }
+    starting = true;
     navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false })
       .then(function (s) {
+        starting = false;
+        if (done || document.hidden) { s.getTracks().forEach(function (t) { t.stop(); }); return; }
         stream = s; video.srcObject = s;
         return video.play();
       })
       .then(function () {
+        if (!stream) return;
         hint.textContent = 'Наведите на QR-этикетку';
         frame.classList.remove('hidden');
         raf = requestAnimationFrame(tick);
       })
       .catch(function (e) {
+        starting = false;
         var name = e && e.name;
         // Здесь (на своём хосте) ошибки камеры настоящие — можно честно звать в настройки.
         var text = (name === 'NotAllowedError' || name === 'SecurityError')
@@ -190,6 +196,15 @@
     }, 300);
   }
   document.getElementById('back').addEventListener('click', cancel);
+
+  // iOS PWA: сканер открыт в Safari поверх приложения. Когда пользователь возвращается
+  // в приложение, эта страница становится СКРЫТОЙ, но не выгружается — pagehide не
+  // срабатывает и камера продолжает работать (на iPhone горит индикатор записи).
+  // Поэтому гасим камеру как только страница скрыта и включаем снова при возврате к ней.
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) stop();
+    else start();
+  });
 
   window.addEventListener('pagehide', stop);
   start();
