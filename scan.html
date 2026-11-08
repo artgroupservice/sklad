@@ -89,6 +89,11 @@
   var foot = document.getElementById('foot');
   var canvas = document.createElement('canvas');
   var stream = null, raf = 0, done = false, starting = false;
+  // Режим оверлея: страница открыта iframe'ом внутри обёртки приложения (а не отдельной
+  // вкладкой). Тогда результат/отмену шлём родителю (обёртке), а он убирает оверлей —
+  // камера гаснет вместе с удалённым iframe. Это основной путь на iOS PWA.
+  var inFrame = false;
+  try { inFrame = window.parent && window.parent !== window.self; } catch (e) { inFrame = true; }
 
   // Куда вернуть результат: origin вкладки, которая нас открыла (приложение). Не узнали — '*'
   // (в QR только ссылка-этикетка, не секрет; приложение само проверяет origin отправителя).
@@ -107,6 +112,11 @@
     if (done) return;
     done = true;
     stop();
+    if (inFrame) {
+      // Оверлей внутри обёртки: отдаём результат родителю, он уберёт оверлей (камера погаснет).
+      try { window.parent.postMessage({ type: 'qr-scan', text: text }, '*'); } catch (e) {}
+      return;
+    }
     var opener = window.opener;
     if (opener && !opener.closed) {
       try { opener.postMessage({ type: 'qr-scan', text: text }, openerOrigin()); } catch (e) {}
@@ -184,12 +194,14 @@
       });
   }
 
-  // Кнопка «Назад»: остановить камеру и закрыть вкладку — iOS вернёт фокус на приложение.
-  // Открыли страницу напрямую (window.close не сработает) — покажем, что отменено, с кнопкой снова.
+  // Кнопка «Отмена»: остановить камеру и уйти со сканера.
+  // - оверлей в обёртке: просим родителя убрать оверлей (камера погаснет вместе с iframe);
+  // - отдельная вкладка: закрываем её (iOS вернёт фокус на приложение), не вышло — сообщение.
   function cancel() {
     if (done) return;
     done = true;
     stop();
+    if (inFrame) { try { window.parent.postMessage({ type: 'qr-close' }, '*'); } catch (e) {} return; }
     window.close();
     setTimeout(function () {
       showMsg('<div>Сканирование отменено.</div><button class="btn" onclick="location.reload()">Сканировать снова</button>');

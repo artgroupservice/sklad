@@ -113,6 +113,52 @@
   }
   app.addEventListener('load', hideBoot);
   setTimeout(hideBoot, 6000);
+
+  // --- Сканер QR как оверлей внутри обёртки --------------------------------------------
+  // Приложение (в iframe Apps Script) камеру не получает: Google кладёт наш HTML в свой
+  // вложенный sandbox-iframe без allow="camera". Поэтому по просьбе приложения показываем
+  // сканер scan.html (наш же хост) оверлеем-iframe с allow="camera" — здесь камера доступна.
+  // Удаление iframe мгновенно гасит камеру — это и есть надёжная «отмена» на iOS PWA, где
+  // отдельную вкладку Safari поверх приложения закрыть/погасить нельзя. Результат QR
+  // возвращаем приложению тем же postMessage {type:'qr-scan'}, что и прежняя вкладка сканера.
+  var appWin = null;      // окно приложения (источник просьбы) — куда вернуть результат
+  var scanFrame = null;   // активный оверлей-сканер
+
+  function openScanner() {
+    if (scanFrame) return;
+    var f = document.createElement('iframe');
+    f.src = 'scan.html';
+    f.title = 'Сканер QR';
+    f.setAttribute('allow', 'camera');
+    f.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;border:0;z-index:10;background:#000;';
+    document.body.appendChild(f);
+    scanFrame = f;
+  }
+  function closeScanner() {
+    if (scanFrame) { scanFrame.remove(); scanFrame = null; }   // удаление iframe гасит камеру
+  }
+
+  window.addEventListener('message', function (e) {
+    var d = e.data;
+    if (!d || typeof d !== 'object') return;
+    // Просьбы приложения (из iframe Apps Script):
+    if (d.type === 'open-scanner') {
+      appWin = e.source;
+      openScanner();
+      try { appWin.postMessage({ type: 'scanner-opened' }, '*'); } catch (x) {}
+      return;
+    }
+    if (d.type === 'close-scanner') { closeScanner(); return; }
+    // Сообщения от самого оверлея-сканера (наш origin, наш iframe):
+    if (scanFrame && e.source === scanFrame.contentWindow) {
+      if (d.type === 'qr-scan' && typeof d.text === 'string') {
+        closeScanner();
+        if (appWin) { try { appWin.postMessage({ type: 'qr-scan', text: d.text }, '*'); } catch (x) {} }
+      } else if (d.type === 'qr-close') {
+        closeScanner();
+      }
+    }
+  });
 })();
 </script>
 </body>
