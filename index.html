@@ -152,9 +152,34 @@
     if (scanBack) { scanBack.remove(); scanBack = null; }
   }
 
+  // --- Мост авторизации: токен логина храним ЗДЕСЬ (first-party) -----------------------
+  // Приложение работает в стороннем iframe (Apps Script). В установленной PWA iOS стирает
+  // localStorage этого iframe между запусками → логин слетал. Поэтому токен держит обёртка
+  // (её origin = origin PWA, его localStorage система сохраняет) и отдаёт приложению по
+  // запросу. Ключ 'sklad.auth' — тот же, что в приложении.
+  var AUTH_KEY = 'sklad.auth';
+  function authGet() { try { return localStorage.getItem(AUTH_KEY); } catch (x) { return null; } }
+  function authSet(v) { try { localStorage.setItem(AUTH_KEY, JSON.stringify(v)); } catch (x) {} }
+  function authDel() { try { localStorage.removeItem(AUTH_KEY); } catch (x) {} }
+
   window.addEventListener('message', function (e) {
     var d = e.data;
     if (!d || typeof d !== 'object') return;
+    // Мост авторизации (сообщения приложения с полем sklad). Приложение Apps Script
+    // рендерится на *.googleusercontent.com — токен отдаём только туда.
+    if (typeof d.sklad === 'string') {
+      if (!/\.googleusercontent\.com$/.test(e.origin)) return;
+      if (d.sklad === 'need-auth') {
+        var raw = authGet();
+        // Отвечаем ровно тому окну, что спросило (e.source) — проходит сквозь вложенные iframe.
+        try { e.source.postMessage({ sklad: 'auth', value: raw ? JSON.parse(raw) : null }, e.origin); } catch (x) {}
+      } else if (d.sklad === 'save-auth') {
+        authSet(d.value);
+      } else if (d.sklad === 'clear-auth') {
+        authDel();
+      }
+      return;
+    }
     // Просьбы приложения (из iframe Apps Script):
     if (d.type === 'open-scanner') {
       appWin = e.source;
